@@ -52,6 +52,9 @@ def string_to_hex(s):
 def hex_to_bytearray(h):
      return binascii.unhexlify(h)
 
+def bytearray_to_hex(b):
+     return binascii.hexlify(b)
+
 def print_sms_dict(sd):
     for k in sd:
         logging.debug("{}: {}".format(k, sd[k]))
@@ -76,20 +79,55 @@ def decoded_sms_to_dict(sms):
         sys.exit(1)
 
     sms_dict = {}
-    sms_dict["version"] = "{}".format(int(sms[0:1]))
-    sms_dict["i"]       = "{}".format(int(sms[1:2]))
-    sms_dict["j"]       = "{}".format(int(sms[2:3]))
-    sms_dict["year"]    = "{:02d}".format(int(sms[3:5]))
-    sms_dict["month"]   = "{}".format(hex(int(sms[5:6])))
-    sms_dict["day"]     = "{:02d}".format(int(sms[6:8]))
-    sms_dict["hour"]    = "{:02d}".format(int(sms[8:10]))
-    sms_dict["minute"]  = "{:02d}".format(int(sms[10:12]))
-    sms_dict["userid"]  = "{:02d}".format(int(sms[12:14]))
+    try:
+        sms_dict["version"] = "{}".format(int(sms[0:1]))
+        sms_dict["i"]       = "{}".format(int(sms[1:2]))
+        sms_dict["j"]       = "{}".format(int(sms[2:3]))
+        sms_dict["year"]    = "{:02d}".format(int(sms[3:5]))
+        sms_dict["month"]   = "{}".format(hex(int(sms[5:6])))
+        sms_dict["day"]     = "{:02d}".format(int(sms[6:8]))
+        sms_dict["hour"]    = "{:02d}".format(int(sms[8:10]))
+        sms_dict["minute"]  = "{:02d}".format(int(sms[10:12]))
+        sms_dict["userid"]  = "{:02d}".format(int(sms[12:14]))
+    except ValueError:
+        logging.error("Found bogus data (sms: {}".format(sms))
+        return None
 
     return sms_dict
 
+def create_msg():
+    version = 2
+    i = 0
+    j = 1
+    year = 19
+    month = 5
+    day = 21
+    hour = 9
+    minute = 2
+    userid = 1
+    pad = "\x00\x00"
+    msg = "{:1d}{:1d}{:1d}{:02d}{:1d}{:02d}{:02d}{:02d}{:02d}{}".format(
+            version, i, j, year, month, day, hour, minute, userid, pad)
+    logging.debug("Created msg({}): {}".format(len(msg), msg))
+
+    return string_to_hex(msg)
+
+def encrypt(key, msg, iv):
+    logging.debug("(E)IV:  {}".format(iv))
+    logging.debug("(E)Msg: {}".format(msg))
+    logging.debug("(E)Key: {}".format(key))
+    iv = hex_to_bytearray(iv)
+    key = hex_to_bytearray(key)
+    msg = hex_to_bytearray(msg)
+    cipher_ctx = AES.new(key, AES.MODE_CBC, iv)
+    ciphertext = cipher_ctx.encrypt(msg)
+    logging.debug("ct: {}".format(bytearray_to_hex(ciphertext)))
+    return ciphertext
 
 def decrypt(key, msg, iv):
+    logging.debug("(D)IV:  {}".format(iv))
+    logging.debug("(D)Msg: {}".format(msg))
+    logging.debug("(D)Key: {}".format(key))
     iv = hex_to_bytearray(iv)
     key = hex_to_bytearray(key)
     msg = hex_to_bytearray(msg)
@@ -141,14 +179,14 @@ def main(argv):
         logging.error("Cannot use -e (--encrypt) and -d (--decrypt) at the same time");
         sys.exit(1)
 
-    encrypt = True;
+    enc_operation = True;
 
     if args.encrypt:
         logging.info("Mode: encryption");
 
     if args.decrypt:
         logging.info("Mode: decryption");
-        encrypt = False;
+        enc_operation = False;
 
     if len(args.input) != 64:
         logging.error("Not the expected length of an Alert Alarm SMS (64 bytes)")
@@ -164,15 +202,17 @@ def main(argv):
     logging.debug("Msg: {}".format(msg))
 
     if pin is not None:
-        key_raw = "{}{}".format("000000000000", args.pin)
+        key_raw = "{}{}".format("0"*12, args.pin)
         key = string_to_hex(key_raw)
         logging.debug("Key: {} ({})".format(key, key_raw))
-        if encrypt:
-            logging.debug("TODO: Add encrypt")
+        if enc_operation:
+            msg = create_msg()
+            ciphertext = encrypt(key, msg, iv)
         else:
             plaintext = decrypt(key, msg, iv)
             pt_dict = decoded_sms_to_dict(plaintext)
-            pretty_print_sms_dict(pt_dict)
+            if pt_dict is not None:
+                pretty_print_sms_dict(pt_dict)
 
     if args.bruteforce:
         # Try brute force
