@@ -27,6 +27,14 @@ def get_parser():
     default=False, \
     help='Perform encryption')
 
+    parser.add_argument('--disable_i', required=False, action="store_true", \
+    default=False, \
+    help='Disable the \'i\' value')
+
+    parser.add_argument('--enable_i', required=False, action="store_true", \
+    default=False, \
+    help='Enable the \'i\' value')
+
     parser.add_argument('-i', '--input', required=False, action="store", \
     default=False, \
     help='Raw message (encrypted or decrypted)')
@@ -121,7 +129,7 @@ def encrypt(key, msg, iv):
     msg = hex_to_bytearray(msg)
     cipher_ctx = AES.new(key, AES.MODE_CBC, iv)
     ciphertext = cipher_ctx.encrypt(msg)
-    logging.debug("ct: {}".format(bytearray_to_hex(ciphertext)))
+    logging.debug("ct:   {}".format(bytearray_to_hex(ciphertext)))
     return ciphertext
 
 def decrypt(key, msg, iv):
@@ -133,6 +141,7 @@ def decrypt(key, msg, iv):
     msg = hex_to_bytearray(msg)
     cipher_ctx = AES.new(key, AES.MODE_CBC, iv)
     plaintext = cipher_ctx.decrypt(msg)
+    logging.debug("pt:   {}".format(bytearray_to_hex(plaintext)))
     return plaintext
 
 
@@ -192,19 +201,32 @@ def main(argv):
         logging.error("Not the expected length of an Alert Alarm SMS (64 bytes)")
         sys.exit(1)
 
+    logging.info("SMS:     {}".format(args.input))
     pin = None
     if args.pin:
         pin = args.pin
 
     iv = args.input[0:32]
     msg = args.input[32:64]
-    logging.debug("IV:  {}".format(iv))
-    logging.debug("Msg: {}".format(msg))
+    logging.info("Msg:     {}".format(msg))
+    logging.info("IV:      {}".format(iv))
+
+    imask = (1 << 112)
+    if args.disable_i:
+        iv = int(iv, 16) | imask
+
+    if args.enable_i:
+        iv = int(iv, 16) & ~imask
+
+    if args.enable_i or args.disable_i:
+        iv = format(iv, 'x')
+        logging.info("New IV:  {}".format(iv))
+        logging.info("New SMS: {}{}".format(iv, msg))
 
     if pin is not None:
         key_raw = "{}{}".format("0"*12, args.pin)
         key = string_to_hex(key_raw)
-        logging.debug("Key: {} ({})".format(key, key_raw))
+        logging.debug("Key:    {} ({})".format(key, key_raw))
         if enc_operation:
             msg = create_msg()
             ciphertext = encrypt(key, msg, iv)
