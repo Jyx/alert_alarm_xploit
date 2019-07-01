@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import binascii
+import datetime
 import logging
 import secrets
 import sys
@@ -12,6 +13,8 @@ from Crypto.Cipher import AES
 ###############################################################################
 # Argument parser
 ###############################################################################
+
+args = None
 
 
 def get_parser():
@@ -35,7 +38,7 @@ def get_parser():
     parser.add_argument('--flip', required=False, action="store",
                         default=False,
                         help='Flip <bit> to change the decrypted plaintext '
-                              '(112 = i, 104 = j)')
+                             '(112 = i, 104 = j)')
 
     parser.add_argument('-i', '--input', required=False, action="store",
                         default=False,
@@ -53,6 +56,10 @@ def get_parser():
                         default=False,
                         help='Generate alarm \'OFF\' (used with parameter -e)')
 
+    parser.add_argument('-t', '--test', required=False, action="store",
+                        default=False,
+                        help='Run using local test data')
+
     parser.add_argument('-p', '--pin', required=False, action="store",
                         default=False,
                         help='Pin code (to turn on/off the alarm)')
@@ -60,6 +67,42 @@ def get_parser():
     parser.add_argument('-v', '--verbose', required=False, action="store_true",
                         default=False,
                         help='Output some verbose debugging info')
+
+    parser.add_argument('--key', required=False, action="store",
+                        default=False,
+                        help='Key to use when encrypt/decrypt (in hex)')
+
+    parser.add_argument('--iv', required=False, action="store",
+                        default=False,
+                        help='IV to be used (in hex)')
+
+    parser.add_argument('--msg', required=False, action="store",
+                        default=False,
+                        help='Message to encrypt/decrypt (in hex)')
+
+    parser.add_argument('--year', required=False, action="store",
+                        default=False,
+                        help='The year represented by two digits')
+
+    parser.add_argument('--month', required=False, action="store",
+                        default=False,
+                        help='The month (1=Jan, ..., 12=Dec)')
+
+    parser.add_argument('--day', required=False, action="store",
+                        default=False,
+                        help='The day represented by two digits')
+
+    parser.add_argument('--hour', required=False, action="store",
+                        default=False,
+                        help='The hour represented by two digits')
+
+    parser.add_argument('--minute', required=False, action="store",
+                        default=False,
+                        help='The minute represented by two digits')
+
+    parser.add_argument('--userid', required=False, action="store",
+                        default=False,
+                        help='The Alert Alarm user id')
 
     return parser
 
@@ -119,19 +162,90 @@ def decoded_sms_to_dict(sms):
     return sms_dict
 
 
-def create_msg(test=True):
-    if test:
-        version = 2
+def create_msg():
+    """ This function have three uses:
+        1) if the '--test' parameter was given, then it will use a set of
+           default data.
+
+        2) If no '--test' given and no other data arguments, it will construct
+           a message from today date with the current time. Here userid will
+           always be set to 1. This is closes to what the Alert Alarm app will
+           do when generating the SMS.
+
+        3) If data arguments are given, then these will be used. For example by
+           calling the script with '--hour 14', that time will be used when
+           creating the message. """
+
+    global args
+    version = 2
+
+    if args.test:
         i = 0
         j = 1
-        year = 19
-        month = 5
+        year = "19"
+        month = "5"
         day = 21
         hour = 9
         minute = 2
         userid = 1
-        pad = "\x00\x00"
-    msg = "{:1d}{:1d}{:1d}{:02d}{:1d}{:02d}{:02d}{:02d}{:02d}{}".format(
+    else:
+        now = datetime.datetime.now()
+        i = 0
+        j = 1
+        if args.year:
+            if len(args.year) != 2:
+                logging.error("Year must be the last two digits (i.e., 19 in "
+                              "2019)")
+                sys.exit(1)
+            year = args.year
+        else:
+            year = now.strftime("%y")
+
+        if args.month:
+            if int(args.month) < 1 or int(args.month) > 12:
+                logging.error("Month  must be between 1 and 12")
+                sys.exit(1)
+            month = hex(int(args.month) - 1)[2:3]
+        else:
+            month = hex(now.month - 1)[2:3]
+
+        if args.day:
+            if len(args.day) != 2 or int(args.day) < 1 or int(args.day) > 31:
+                logging.error("Day must be given using two digits (i.e. 08, "
+                              "22 etc)")
+                sys.exit(1)
+            day = int(args.day)
+        else:
+            day = now.day
+
+        if args.hour:
+            if len(args.hour) != 2 or int(args.hour) > 23:
+                logging.error("Hour must be given using two digits (i.e. 08, "
+                              "22 etc)")
+                sys.exit(1)
+            hour = int(args.hour)
+        else:
+            hour = now.hour
+
+        if args.minute:
+            if len(args.minute) != 2 or int(args.minute) > 59:
+                logging.error("Minute must be given using two digits (i.e. "
+                              "08, 22 etc)")
+                sys.exit(1)
+            minute = int(args.minute)
+        else:
+            minute = now.minute
+
+        if args.userid:
+            if len(args.userid) != 1:
+                logging.error("UserID must be given using a single digit")
+                sys.exit(1)
+            userid = int(args.userid)
+        else:
+            userid = 1
+
+    pad = "\x00\x00"
+    msg = "{:1d}{:1d}{:1d}{:2s}{:1s}{:02d}{:02d}{:02d}{:02d}{}".format(
             version, i, j, year, month, day, hour, minute, userid, pad)
     logging.debug("Created msg({}): {}".format(len(msg), msg))
 
@@ -142,9 +256,19 @@ def encrypt(key, msg, iv):
     logging.debug("(E)IV:  {}".format(iv))
     logging.debug("(E)Msg: {}".format(msg))
     logging.debug("(E)Key: {}".format(key))
+
+    if key is None or msg is None or iv is None:
+        logging.error("Missing parameters when calling encrypt")
+        sys.exit(1)
+
     iv = hex_to_bytearray(iv)
     key = hex_to_bytearray(key)
     msg = hex_to_bytearray(msg)
+
+    if len(key) != 16 or len(msg) != 16 or len(iv) != 16:
+        logging.error("Unexpected size of parameters when calling encrypt")
+        sys.exit(1)
+
     cipher_ctx = AES.new(key, AES.MODE_CBC, iv)
     ciphertext = cipher_ctx.encrypt(msg)
     logging.debug("ct:     {}".format(bytearray_to_hex(ciphertext).decode()))
@@ -155,9 +279,19 @@ def decrypt(key, msg, iv):
     logging.debug("(D)IV:  {}".format(iv))
     logging.debug("(D)Msg: {}".format(msg))
     logging.debug("(D)Key: {}".format(key))
-    iv = hex_to_bytearray(iv)
+
+    if key is None or msg is None or iv is None:
+        logging.error("Missing parameters when calling decrypt")
+        sys.exit(1)
+
     key = hex_to_bytearray(key)
     msg = hex_to_bytearray(msg)
+    iv = hex_to_bytearray(iv)
+
+    if len(key) != 16 or len(msg) != 16 or len(iv) != 16:
+        logging.error("Unexpected size of parameters when calling decrypt")
+        sys.exit(1)
+
     cipher_ctx = AES.new(key, AES.MODE_CBC, iv)
     plaintext = cipher_ctx.decrypt(msg)
     logging.debug("pt:     {}".format(bytearray_to_hex(plaintext).decode()))
@@ -188,7 +322,7 @@ def brute_force(msg, iv):
 
     logging.debug("Best key score: {}".format(best_score))
     pin = binascii.unhexlify(best_key[24:32])
-    logging.info("Probably the correct key: {} gives pin: {}".
+    logging.info("(Probably) found the correct encryption key / pin: {} / {}".
                  format(best_key, int((pin))))
 
 ###############################################################################
@@ -197,6 +331,7 @@ def brute_force(msg, iv):
 
 
 def main(argv):
+    global args
     parser = get_parser()
 
     if len(sys.argv) == 1:
@@ -218,22 +353,45 @@ def main(argv):
         sys.exit(1)
 
     enc_operation = True
-    iv = ""
-    msg = ""
+
+    iv = None
+    if args.iv:
+        if len(args.iv) != 32:
+            logging.error("Wrong size of IV")
+            sys.exit(1)
+        iv = args.iv
+
+    msg = None
+    if args.msg:
+        if len(args.msg) != 32:
+            logging.error("Wrong size of message")
+            sys.exit(1)
+
+    key = None
+    if args.key:
+        if len(args.key) != 32:
+            logging.error("Wrong size of key")
+            sys.exit(1)
 
     if args.encrypt:
         logging.info("Mode: encryption")
-        msg = create_msg()
-        # Generate a random IV, crude way to know that there is always 32 bytes
-        while True:
-            iv = format(secrets.randbelow(2**128), 'x')
-            if len(iv) == 32:
-                break
+        if msg is None:
+            msg = create_msg()
+
+        if iv is None:
+            # Generate a random IV, crude way to know that there is always 32 bytes
+            while True:
+                iv = format(secrets.randbelow(2**128), 'x')
+                if len(iv) == 32:
+                    break
 
     if args.decrypt:
         logging.info("Mode: decryption")
-        iv = args.input[0:32]
-        msg = args.input[32:64]
+        if iv is None:
+            iv = args.input[0:32]
+
+        if msg is None:
+            msg = args.input[32:64]
         enc_operation = False
 
     if args.input and len(args.input) != 64:
@@ -242,12 +400,19 @@ def main(argv):
         sys.exit(1)
 
     logging.info("Original SMS:     {}".format(args.input))
+    key_raw = "{}".format("0"*16)
     pin = None
     if args.pin:
         pin = args.pin
+        key_raw = "{}{}".format("0"*12, pin)
+        key = string_to_hex(key_raw)
+    elif args.key:
+        key_raw = "Using raw key"
+        key = args.key
 
     logging.info("Msg:              {}".format(msg))
     logging.info("IV:               {}".format(iv))
+    logging.info("Key:              {} ({})".format(key, key_raw))
 
     if args.flip:
         iv = int(iv, 16)
@@ -257,10 +422,7 @@ def main(argv):
         logging.info("Continue with decryption to show results of a "
                      "flipped bit")
 
-    if pin is not None:
-        key_raw = "{}{}".format("0"*12, args.pin)
-        key = string_to_hex(key_raw)
-        logging.debug("Key:    {} ({})".format(key, key_raw))
+    if pin is not None or key is not None:
         if enc_operation:
             ciphertext = encrypt(key, msg, iv)
             logging.info("Crafted SMS:      {}{}".
