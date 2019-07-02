@@ -299,7 +299,6 @@ def decrypt(key, msg, iv):
 
 
 def brute_force(msg, iv):
-    logging.info("Running bruteforce ...")
     scores = {}
     for k in range(0, 10000):
         key = string_to_hex("{}{:04d}".format("0"*12, k))
@@ -322,8 +321,94 @@ def brute_force(msg, iv):
 
     logging.debug("Best key score: {}".format(best_score))
     pin = binascii.unhexlify(best_key[24:32])
-    logging.info("(Probably) found the correct encryption key / pin: {} / {}".
-                 format(best_key, int((pin))))
+    logging.info("(Probably) found the correct ...")
+    logging.info("   encryption key: {}".format(best_key))
+    logging.info("   pin:            {}".format(int((pin))))
+
+
+def setup_iv():
+    iv = None
+    if args.iv:
+        if len(args.iv) != 32:
+            logging.error("Wrong size of IV")
+            sys.exit(1)
+        iv = args.iv
+
+    if args.encrypt:
+        if iv is None:
+            # Generate a random IV, crude way to know that there is always 32
+            # bytes
+            while True:
+                iv = format(secrets.randbelow(2**128), 'x')
+                if len(iv) == 32:
+                    break
+    elif (args.decrypt or args.flip or args.bruteforce) and args.input:
+        iv = args.input[0:32]
+
+    return iv
+
+
+def setup_msg():
+    msg = None
+    if args.msg:
+        if len(args.msg) != 32:
+            logging.error("Wrong size of message")
+            sys.exit(1)
+        msg = args.msg
+
+    if args.encrypt and msg is None:
+        msg = create_msg()
+    elif (args.decrypt or args.flip or args.bruteforce) and msg is None:
+        msg = args.input[32:64]
+
+    return msg
+
+
+def setup_key():
+    key = None
+    key_raw = "{}".format("0"*16)
+    pin = None
+
+    if args.pin:
+        pin = args.pin
+        key_raw = "{}{}".format("0"*12, pin)
+        key = string_to_hex(key_raw)
+    elif args.key:
+        if len(args.key) != 32:
+            logging.error("Wrong size of key")
+            sys.exit(1)
+        key_raw = hex_to_bytearray((args.key)).decode()
+        key = args.key
+
+    return key, key_raw
+
+
+def configure_logging():
+    if args.verbose:
+        logging.basicConfig(format='[%(levelname)s]: %(message)s',
+                            level=logging.DEBUG)
+    else:
+        logging.basicConfig(format='[%(levelname)s]: %(message)s',
+                            level=logging.INFO)
+
+
+def check_args_combinations():
+    if args.input and len(args.input) != 64:
+        logging.error("Not the expected length of an Alert Alarm SMS "
+                      "(64 bytes)")
+        sys.exit(1)
+
+    if args.encrypt and args.decrypt:
+        logging.error("Cannot use -e (--encrypt) and -d (--decrypt) at the "
+                      "same time")
+        sys.exit(1)
+
+    if args.decrypt:
+        if not args.pin and not args.key:
+            logging.error("Pin (-p) or key (--key) must be supplied when "
+                          "running decrypt (-d)")
+            sys.exit(1)
+
 
 ###############################################################################
 # Main function
@@ -339,102 +424,44 @@ def main(argv):
         sys.exit(1)
 
     args = parser.parse_args()
+    configure_logging()
+    check_args_combinations()
 
-    if args.verbose:
-        logging.basicConfig(format='[%(levelname)s]: %(message)s',
-                            level=logging.DEBUG)
-    else:
-        logging.basicConfig(format='[%(levelname)s]: %(message)s',
-                            level=logging.INFO)
+    iv = setup_iv()
+    msg = setup_msg()
+    key, key_raw = setup_key()
 
-    if args.encrypt and args.decrypt:
-        logging.error("Cannot use -e (--encrypt) and -d (--decrypt) at the "
-                      "same time")
-        sys.exit(1)
-
-    enc_operation = True
-
-    iv = None
-    if args.iv:
-        if len(args.iv) != 32:
-            logging.error("Wrong size of IV")
-            sys.exit(1)
-        iv = args.iv
-
-    msg = None
-    if args.msg:
-        if len(args.msg) != 32:
-            logging.error("Wrong size of message")
-            sys.exit(1)
-
-    key = None
-    if args.key:
-        if len(args.key) != 32:
-            logging.error("Wrong size of key")
-            sys.exit(1)
+    if args.input:
+        logging.info("Original SMS:     {}".format(args.input))
+    logging.info("Msg:              {}".format(msg))
+    logging.info("IV:               {}".format(iv))
+    logging.info("Key:              {} ({})\n".format(key, key_raw))
 
     if args.encrypt:
         logging.info("Mode: encryption")
-        if msg is None:
-            msg = create_msg()
-
-        if iv is None:
-            # Generate a random IV, crude way to know that there is always 32 bytes
-            while True:
-                iv = format(secrets.randbelow(2**128), 'x')
-                if len(iv) == 32:
-                    break
+        ciphertext = encrypt(key, msg, iv)
+        logging.info("Crafted SMS:      {}{}".
+                     format(iv, bytearray_to_hex(ciphertext).decode()))
 
     if args.decrypt:
+        if args.flip:
+            logging.info("Mode: flip bits")
+            iv = int(iv, 16)
+            iv = iv ^ (1 << int(args.flip))
+            iv = format(iv, 'x')
+            logging.info("Modified IV:      {}".format(iv))
+            logging.info("Modified SMS:     {}{}".format(iv, msg))
+            logging.info("Continue with decryption to show results after "
+                         "flipping a bit")
+
         logging.info("Mode: decryption")
-        if iv is None:
-            iv = args.input[0:32]
-
-        if msg is None:
-            msg = args.input[32:64]
-        enc_operation = False
-
-    if args.input and len(args.input) != 64:
-        logging.error("Not the expected length of an Alert Alarm SMS "
-                      "(64 bytes)")
-        sys.exit(1)
-
-    logging.info("Original SMS:     {}".format(args.input))
-    key_raw = "{}".format("0"*16)
-    pin = None
-    if args.pin:
-        pin = args.pin
-        key_raw = "{}{}".format("0"*12, pin)
-        key = string_to_hex(key_raw)
-    elif args.key:
-        key_raw = "Using raw key"
-        key = args.key
-
-    logging.info("Msg:              {}".format(msg))
-    logging.info("IV:               {}".format(iv))
-    logging.info("Key:              {} ({})".format(key, key_raw))
-
-    if args.flip:
-        iv = int(iv, 16)
-        iv = iv ^ (1 << int(args.flip))
-        iv = format(iv, 'x')
-        logging.info("Modified SMS:     {}{}".format(iv, msg))
-        logging.info("Continue with decryption to show results of a "
-                     "flipped bit")
-
-    if pin is not None or key is not None:
-        if enc_operation:
-            ciphertext = encrypt(key, msg, iv)
-            logging.info("Crafted SMS:      {}{}".
-                         format(iv, bytearray_to_hex(ciphertext).decode()))
-        else:
-            plaintext = decrypt(key, msg, iv)
-            pt_dict = decoded_sms_to_dict(plaintext)
-            if pt_dict is not None:
-                pretty_print_sms_dict(pt_dict)
+        plaintext = decrypt(key, msg, iv)
+        pt_dict = decoded_sms_to_dict(plaintext)
+        if pt_dict is not None:
+            pretty_print_sms_dict(pt_dict)
 
     if args.bruteforce:
-        # Try brute force
+        logging.info("Mode: bruteforce")
         brute_force(msg, iv)
 
 
