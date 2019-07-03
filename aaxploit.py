@@ -80,6 +80,14 @@ def get_parser():
                         default=False,
                         help='Message to encrypt/decrypt (in hex)')
 
+    parser.add_argument('--iparam', required=False, action="store",
+                        default=False,
+                        help='The i parameter')
+
+    parser.add_argument('--jparam', required=False, action="store",
+                        default=False,
+                        help='The j parameter')
+
     parser.add_argument('--year', required=False, action="store",
                         default=False,
                         help='The year represented by two digits')
@@ -189,9 +197,23 @@ def create_msg():
         minute = 2
         userid = 1
     else:
+        if args.iparam:
+            if len(args.iparam) != 1:
+                logging.error("iparam should be a single digit")
+                sys.exit(1)
+            i = int(args.iparam)
+        else:
+            i = 0
+
+        if args.jparam:
+            if len(args.jparam) != 1:
+                logging.error("jparam should be a single digit")
+                sys.exit(1)
+            j = int(args.jparam)
+        else:
+            j = 1
+
         now = datetime.datetime.now()
-        i = 0
-        j = 1
         if args.year:
             if len(args.year) != 2:
                 logging.error("Year must be the last two digits (i.e., 19 in "
@@ -442,17 +464,15 @@ def main(argv):
         ciphertext = encrypt(key, msg, iv)
         logging.info("Crafted SMS:      {}{}".
                      format(iv, bytearray_to_hex(ciphertext).decode()))
+    if args.flip:
+        logging.info("Mode: flip bits")
+        iv = int(iv, 16)
+        iv = iv ^ (1 << int(args.flip))
+        iv = format(iv, 'x')
+        logging.info("Modified IV:      {}".format(iv))
+        logging.info("Modified SMS:     {}{}".format(iv, msg))
 
     if args.decrypt:
-        if args.flip:
-            logging.info("Mode: flip bits")
-            iv = int(iv, 16)
-            iv = iv ^ (1 << int(args.flip))
-            iv = format(iv, 'x')
-            logging.info("Modified IV:      {}".format(iv))
-            logging.info("Modified SMS:     {}{}".format(iv, msg))
-            logging.info("Continue with decryption to show results after "
-                         "flipping a bit")
 
         logging.info("Mode: decryption")
         plaintext = decrypt(key, msg, iv)
